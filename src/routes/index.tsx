@@ -1,24 +1,42 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { Loader2 } from "lucide-react";
+import { StoreProvider, useStore } from "@/lib/store";
+import { useMe } from "@/lib/data";
+import { Auth } from "@/components/fg/Auth";
+import { Shell } from "@/components/fg/Shell";
+import { BuyerShell } from "@/components/fg/BuyerShell";
+import { Onboarding } from "@/components/fg/Onboarding";
 
-// No head() here: the home route inherits title/description/og/twitter from
-// __root.tsx, and ships no og:image so serve-time hosting can inject the
-// project's social preview (explicit og:image or latest screenshot).
 export const Route = createFileRoute("/")({
+  head: () => ({
+    meta: [
+      { title: "FreshGrid — Scan · Store · Sell | FPO Agri-Tech Portal" },
+      { name: "description", content: "AI crate grading, cold room booking on a live map, live mandi prices, buyer escrow and Kisan khata for Indian farmers and FPOs." },
+      { property: "og:title", content: "FreshGrid — Scan · Store · Sell" },
+      { property: "og:description", content: "AI crate grading, cold storage booking, live mandi prices and buyer escrow for Indian farmers." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
+    ],
+  }),
   component: Index,
 });
 
-// IMPORTANT: Replace this placeholder. See ./README.md for routing conventions.
+function Loading() {
+  return <div className="flex min-h-screen items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>;
+}
+
+function App() {
+  const { session, authReady } = useStore();
+  const me = useMe();
+  if (!authReady) return <Loading />;
+  if (!session) return <Auth />;
+  if (me.isLoading || !me.data) return <Loading />;
+  const { profile, role } = me.data;
+  const complete = role === "farmer" ? !!(profile?.village && profile?.upi_id && profile?.phone) : role === "buyer" ? !!(profile?.org_name && profile?.phone) : false;
+  if (!complete) return <Onboarding profile={profile ?? null} role={role} />;
+  return role === "buyer" ? <BuyerShell /> : <Shell />;
+}
+
 function Index() {
-  return (
-    <div
-      className="flex min-h-screen items-center justify-center"
-      style={{ backgroundColor: "#fcfbf8" }}
-    >
-      <img
-        data-lovable-blank-page-placeholder="REMOVE_THIS"
-        src="https://cdn.gpteng.co/blank-app-v1.svg"
-        alt="Your app will live here!"
-      />
-    </div>
-  );
+  return <StoreProvider><App /></StoreProvider>;
 }

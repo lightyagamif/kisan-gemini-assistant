@@ -1,0 +1,123 @@
+import { useMemo, useState } from "react";
+import { QRCodeSVG } from "qrcode.react";
+import { BadgeCheck, FileText, Landmark, Printer, QrCode, X } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
+import { cropBy, useStore } from "@/lib/store";
+import { useBookings, useColdRooms, useInvalidate, useLots, useMe, type Booking, type Lot } from "@/lib/data";
+import { inr } from "@/lib/income";
+import { Badge, Btn, Modal, SectionTitle } from "./ui";
+import { UpiPay } from "./UpiPay";
+
+type Entry = { id: string; type: "sale" | "cold"; title: string; amount: number; status: string; date: string; utr: string | null; lot?: Lot; booking?: Booking };
+
+export function PayTab() {
+  const { t } = useStore();
+  const { data: me } = useMe();
+  const lots = useLots();
+  const bookings = useBookings();
+  const rooms = useColdRooms();
+  const inv = useInvalidate();
+  const [qr, setQr] = useState<Lot | null>(null);
+  const [payDues, setPayDues] = useState(false);
+  const [filter, setFilter] = useState<"all" | "sale" | "cold">("all");
+  const [receipt, setReceipt] = useState<Entry | null>(null);
+  const L = lots.data ?? []; const B = bookings.data ?? [];
+  const earned = L.filter((l) => l.status === "settled").reduce((a, l) => a + l.net_amount, 0);
+  const escrow = L.filter((l) => l.status === "escrow");
+  const open = L.filter((l) => l.status === "open");
+  const escrowSum = escrow.reduce((a, l) => a + l.net_amount, 0);
+  const dues = B.filter((b) => !b.paid);
+  const dueSum = dues.reduce((a, b) => a + b.amount, 0);
+  const roomName = (id: string) => rooms.data?.find((r) => r.id === id)?.name ?? "Cold room";
+
+  const entries: Entry[] = useMemo(() => [
+    ...L.filter((l) => l.status !== "cancelled").map((l) => ({ id: l.lot_code, type: "sale" as const, title: `${cropBy(l.crop).en} ${l.kg.toLocaleString("en-IN")} kg${l.buyer_name ? ` — ${l.buyer_name}` : " — awaiting buyer"}`, amount: l.net_amount, status: l.status, date: (l.settled_at ?? l.ordered_at ?? l.created_at).slice(0, 10), utr: l.utr, lot: l })),
+    ...B.map((b) => ({ id: b.pass_no, type: "cold" as const, title: `${roomName(b.cold_room_id)} — ${b.crates} crates × ${b.days} day${b.days > 1 ? "s" : ""}`, amount: -b.amount, status: b.paid ? "paid" : "due", date: b.created_at.slice(0, 10), utr: b.utr, booking: b })),
+  ].sort((a, b) => b.date.localeCompare(a.date)), [L, B, rooms.data]);
+
+  const settleDues = async (u: string, method: string) => {
+    const { error } = await supabase.from("bookings").update({ paid: true, utr: u, pay_method: method }).in("id", dues.map((d) => d.id));
+    if (!error) inv("bookings");
+    setPayDues(false);
+  };
+  const cancel = async (l: Lot) => { await supabase.from("lots").update({ status: "cancelled" }).eq("id", l.id); inv("lots"); };
+  const shown = entries.filter((x) => filter === "all" || x.type === filter);
+  return (
+    <div>
+      <SectionTitle title={t("Payments & Khata", "भुगतान और खाता")} sub={t("Escrow settlements, dues and your passbook", "एस्क्रो, बकाया और बही-खाता")} />
+      <div className="hero-band rounded-2xl p-5">
+        <p className="text-xs uppercase tracking-widest opacity-80">{t("Total Earned (settled sales)", "कुल कमाई")}</p>
+        <p className="font-serif text-4xl font-black">{inr(earned)}</p>
+        <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+          <div className="rounded-lg bg-background/10 p-3"><p className="text-[0.7rem] opacity-80">{t("In Buyer Escrow", "एस्क्रो में")}</p><p className="text-xl font-bold">{inr(escrowSum)}</p><p className="text-[0.6rem] opacity-70">{escrow.length} lot(s) · pending delivery</p></div>
+          <div className="rounded-lg bg-background/10 p-3"><p className="text-[0.7rem] opacity-80">{t("Cold Storage Credit Used", "कोल्ड क्रेडिट")}</p><p className="text-xl font-bold">{inr(dueSum)}</p><p className="text-[0.6rem] opacity-70">{dues.length} unpaid booking(s)</p></div>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-gold/50 pt-3 text-xs"><Landmark className="h-4 w-4" />UPI: {me?.profile?.upi_id}<span className="rounded-full bg-gold px-2 py-0.5 font-bold">TEST PAYMENTS</span></div>
+      </div>
+
+      <h3 className="mb-2 mt-6 text-lg font-bold text-primary">{t("Buyer Orders in Escrow", "एस्क्रो ऑर्डर")}</h3>
+      {escrow.length === 0 && <p className="card-classic p-4 text-sm text-muted-foreground">{t("No buyer orders yet. When a buyer orders one of your lots, it appears here.", "अभी कोई ऑर्डर नहीं।")}</p>}
+      <div className="space-y-3">
+        {escrow.map((o) => (
+          <div key={o.id} className="card-classic border-l-4 border-l-gold p-4">
+            <div className="flex justify-between"><div><Badge tone="amber">ESCROW · {o.lot_code}</Badge><p className="mt-1 font-bold text-primary">{o.kg.toLocaleString("en-IN")} kg {cropBy(o.crop).en} {cropBy(o.crop).emoji}</p><p className="text-xs text-muted-foreground">{o.buyer_name}</p></div><p className="text-xl font-black text-success">{inr(o.net_amount)}</p></div>
+            <Btn v="outline" className="mt-3 w-full" onClick={() => setQr(o)}><QrCode className="h-4 w-4" />{t("Show Delivery QR to Buyer", "डिलीवरी QR दिखाएँ")}</Btn>
+          </div>
+        ))}
+      </div>
+
+      {open.length > 0 && <>
+        <h3 className="mb-2 mt-6 text-lg font-bold text-primary">{t("Listed — Waiting for Buyers", "बिक्री के लिए सूचीबद्ध")}</h3>
+        <div className="space-y-2">{open.map((o) => <div key={o.id} className="card-classic flex items-center justify-between px-3 py-2 text-sm"><span>{cropBy(o.crop).emoji} {o.lot_code} · {o.kg} kg @ ₹{Number(o.price_per_kg)}</span><button aria-label="Cancel listing" onClick={() => cancel(o)} className="flex items-center gap-1 text-xs text-destructive"><X className="h-3.5 w-3.5" />Cancel</button></div>)}</div>
+      </>}
+
+      <div className="card-classic mt-5 flex items-center justify-between p-4">
+        <div><p className="font-bold text-primary">{t("Cold Storage Dues", "कोल्ड स्टोर बकाया")}</p><p className="text-xs text-muted-foreground">{dues.length} pending · FPO credit</p></div>
+        {dueSum > 0 ? <Btn v="gold" onClick={() => setPayDues(true)}>Pay {inr(dueSum)}</Btn> : <Badge tone="green">✔ All clear</Badge>}
+      </div>
+
+      <h3 className="mb-2 mt-6 text-lg font-bold text-primary">{t("Kisan Passbook", "किसान बही-खाता")}</h3>
+      <div className="mb-3 flex flex-wrap gap-2">{([["all", "All"], ["sale", "Crate Sales"], ["cold", "Cold Room"]] as const).map(([k, l]) => <button key={k} onClick={() => setFilter(k)} className={`rounded-full border px-3 py-1 text-xs font-semibold ${filter === k ? "border-primary bg-primary text-primary-foreground" : "border-gold/60 text-primary"}`}>{l}</button>)}</div>
+      <div className="card-classic divide-y divide-border">
+        {shown.length === 0 && <p className="p-4 text-sm text-muted-foreground">{t("No entries yet.", "अभी कोई प्रविष्टि नहीं।")}</p>}
+        {shown.map((x) => (
+          <div key={x.id} className="flex items-center gap-3 p-3">
+            <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{x.title}</p><p className="text-[0.7rem] text-muted-foreground">{x.date} · {x.id}{x.utr ? ` · Ref ${x.utr}` : ""}</p></div>
+            <div className="text-right"><p className={`text-sm font-bold ${x.amount > 0 ? "text-success" : "text-destructive"}`}>{x.amount > 0 ? "+" : "−"}{inr(Math.abs(x.amount))}</p><Badge tone={x.status === "settled" || x.status === "paid" ? "green" : x.status === "escrow" || x.status === "open" ? "amber" : "red"}>{x.status}</Badge></div>
+            <button aria-label="View receipt" onClick={() => setReceipt(x)} className="rounded p-1.5 text-primary hover:bg-secondary"><FileText className="h-4 w-4" /></button>
+          </div>
+        ))}
+      </div>
+
+      <Modal open={!!qr} onClose={() => setQr(null)} title={t("Delivery QR for Buyer", "खरीदार के लिए QR")}>
+        {qr && <div className="text-center"><div className="mx-auto w-fit rounded-xl border-2 border-gold bg-popover p-4"><QRCodeSVG value={qr.lot_code} size={200} fgColor="#1B4332" bgColor="transparent" /></div><p className="mt-3 font-mono text-lg font-bold">{qr.lot_code}</p><p className="text-sm">{inr(qr.net_amount)}</p><p className="mt-2 text-xs text-muted-foreground">{t("On delivery, the buyer enters or scans this code in their FreshGrid app. Escrow is then released to you.", "डिलीवरी पर खरीदार यह कोड डालेगा, फिर भुगतान जारी होगा।")}</p></div>}
+      </Modal>
+      <Modal open={payDues} onClose={() => setPayDues(false)} title={t("Pay Cold Room Dues", "बकाया भुगतान")}><UpiPay amount={dueSum} payee="FreshGrid FPO Cold Network" onPaid={settleDues} /></Modal>
+      <Modal open={!!receipt} onClose={() => setReceipt(null)} title="e-Receipt" wide>{receipt && <Receipt x={receipt} />}</Modal>
+    </div>
+  );
+}
+
+function Receipt({ x }: { x: Entry }) {
+  const { data: me } = useMe();
+  const p = me?.profile;
+  const rows: [string, string][] = [["Receipt No.", x.id], ["Date", x.date], ["Farmer", p?.full_name ?? ""], ["FPO ID", p?.fpo_id ?? "—"], ["Village", `${p?.village}, ${p?.district}, ${p?.state}`], ["Particulars", x.title]];
+  if (x.lot) rows.push(["Crop", cropBy(x.lot.crop).en], ["Weight", `${x.lot.kg.toLocaleString("en-IN")} kg`], ["Grade", `Grade ${x.lot.grade}`], ["Rate", `₹${Number(x.lot.price_per_kg)}/kg`], ["Gross Value", inr(x.lot.gross)], ["Cold Room Deduction", "− " + inr(x.lot.cold_deduction)], ["Pooled Transport Deduction", "− " + inr(x.lot.transport_deduction)]);
+  if (x.booking) rows.push(["Payment Method", x.booking.pay_method ?? "FPO Credit"]);
+  const done = x.status === "settled" || x.status === "paid";
+  return (
+    <div>
+      <div className="print-area certificate relative p-5 text-sm">
+        <div className="flex items-start justify-between border-b-2 border-double border-gold pb-3">
+          <div><p className="font-serif text-xl font-black text-primary">FreshGrid Settlement Receipt</p><p className="text-[0.65rem] text-muted-foreground">Generated by FreshGrid · Test-mode payment reference</p></div>
+          <div className="seal flex h-16 w-16 shrink-0 flex-col items-center justify-center text-center text-[0.5rem] font-bold leading-tight"><BadgeCheck className="h-5 w-5" />FPO<br />SEAL</div>
+        </div>
+        <dl className="mt-3 space-y-1">{rows.map(([k, v]) => <div key={k} className="flex justify-between gap-4 border-b border-dotted border-border py-1"><dt className="text-muted-foreground">{k}</dt><dd className="text-right font-semibold">{v}</dd></div>)}</dl>
+        <div className="mt-3 flex items-center justify-between rounded-lg bg-accent p-3"><span className="font-bold">{x.amount > 0 ? "Net Payout" : "Amount"}</span><span className="font-serif text-2xl font-black text-primary">{inr(Math.abs(x.amount))}</span></div>
+        <p className="mt-2 font-mono text-xs">Ref: {x.utr ?? "Pending"}</p>
+        {done && <span className="stamp absolute bottom-6 right-6 px-3 py-1">PAID</span>}
+      </div>
+      <Btn className="mt-3 w-full" onClick={() => window.print()}><Printer className="h-4 w-4" />Download / Print Receipt</Btn>
+    </div>
+  );
+}
