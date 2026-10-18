@@ -14,7 +14,10 @@
     "test:watch": "vitest"
   },
   "overrides": {
-    "rolldown": "1.2.1"
+    "rolldown": "1.2.1",
+    "@teachablemachine/image": {
+      "@tensorflow/tfjs": "$@tensorflow/tfjs"
+    }
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
