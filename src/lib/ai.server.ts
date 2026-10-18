@@ -36,7 +36,7 @@ async function geminiChat(request: Request, apiKey: string) {
   let upstream: Response;
   try {
     upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:streamGenerateContent?alt=sse`, {
-      method: "POST", signal: request.signal,
+      method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: `${SYSTEM}\n\nFARMER CONTEXT:\n${(body.context ?? "").slice(0, 6000)}` }] },
@@ -44,7 +44,8 @@ async function geminiChat(request: Request, apiKey: string) {
       }),
     });
   } catch (e) {
-    if (request.signal.aborted) return new Response(null, { status: 499 });
+    // Client disconnected or network hiccup before Gemini answered — not a server error.
+    if (e instanceof Error && (e.name === "AbortError" || e.message === "aborted")) return new Response(null, { status: 499 });
     throw e;
   }
   if (!upstream.ok || !upstream.body) {
@@ -64,8 +65,9 @@ async function geminiChat(request: Request, apiKey: string) {
     try {
       const ev = JSON.parse(d) as { candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] }; finishReason?: string }[]; promptFeedback?: { blockReason?: string } };
       const c = ev.candidates?.[0];
-      for (const part of c?.content?.parts ?? []) if (part.text && !part.thought) ctrl.enqueue(enc.encode(part.text));
-      if (ev.promptFeedback?.blockReason || c?.finishReason === "SAFETY") ctrl.enqueue(enc.encode("\n\n⚠ The assistant could not answer this question."));
+      const send = (t: string) => { try { ctrl.enqueue(enc.encode(t)); } catch { /* client gone */ } };
+      for (const part of c?.content?.parts ?? []) if (part.text && !part.thought) send(part.text);
+      if (ev.promptFeedback?.blockReason || c?.finishReason === "SAFETY") send("\n\n⚠ The assistant could not answer this question.");
     } catch { /* partial */ }
   };
   const out = upstream.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
