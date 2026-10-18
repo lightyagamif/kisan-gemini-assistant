@@ -1,6 +1,6 @@
 // Server-only: Kisan Assistant chat (streamed). Uses Google Gemini directly via GEMINI_API_KEY,
 // so it works on any host (Vercel, etc.) with no Lovable dependency.
-const MODEL = "gemini-2.5-flash";
+const MODEL = "gemini-3.8-flash";
 
 async function verifyUser(request: Request) {
   const auth = request.headers.get("authorization") ?? "";
@@ -20,7 +20,7 @@ const SYSTEM = `You are "Kisan Sahayak", the FreshGrid FPO & agri-expert assista
 
 export async function handleChat(request: Request) {
   if (!(await verifyUser(request))) return Response.json({ error: "Please sign in again." }, { status: 401 });
-  const apiKey = process.env["GEMINI_API_KEY"];
+  const apiKey = process.env["GEMINI_API_KEY"] ?? process.env["GOOGLE_API_KEY"];
   if (!apiKey) return Response.json({ error: "Kisan Assistant is not set up yet: the GEMINI_API_KEY environment variable is missing on the server." }, { status: 500 });
   return geminiChat(request, apiKey);
 }
