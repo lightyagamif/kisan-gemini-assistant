@@ -65,8 +65,9 @@ async function geminiChat(request: Request, apiKey: string) {
     try {
       const ev = JSON.parse(d) as { candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] }; finishReason?: string }[]; promptFeedback?: { blockReason?: string } };
       const c = ev.candidates?.[0];
-      for (const part of c?.content?.parts ?? []) if (part.text && !part.thought) ctrl.enqueue(enc.encode(part.text));
-      if (ev.promptFeedback?.blockReason || c?.finishReason === "SAFETY") ctrl.enqueue(enc.encode("\n\n⚠ The assistant could not answer this question."));
+      const send = (t: string) => { try { ctrl.enqueue(enc.encode(t)); } catch { /* client gone */ } };
+      for (const part of c?.content?.parts ?? []) if (part.text && !part.thought) send(part.text);
+      if (ev.promptFeedback?.blockReason || c?.finishReason === "SAFETY") send("\n\n⚠ The assistant could not answer this question.");
     } catch { /* partial */ }
   };
   const out = upstream.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
