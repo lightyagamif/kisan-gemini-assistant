@@ -33,8 +33,8 @@ async function geminiChat(request: Request, apiKey: string) {
   try { body = await request.json(); } catch { return Response.json({ error: "Bad request" }, { status: 400 }); }
   const msgs = (body.messages ?? []).filter((m) => (m.role === "user" || m.role === "assistant") && typeof m.content === "string" && m.content.trim()).slice(-20)
     .map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content.slice(0, 2000) }] }));
-  while (msgs.length && msgs[0].role !== "user") msgs.shift(); // Gemini needs the first turn to be the user
-  if (!msgs.length || msgs[msgs.length - 1].role !== "user") return Response.json({ error: "Empty message" }, { status: 400 });
+  while (msgs.length && msgs[0]?.role !== "user") msgs.shift(); // Gemini needs the first turn to be the user
+  if (!msgs.length || msgs[msgs.length - 1]?.role !== "user") return Response.json({ error: "Empty message" }, { status: 400 });
 
   let upstream: Response;
   try {
