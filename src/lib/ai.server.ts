@@ -1,6 +1,6 @@
 // Server-only: Kisan Assistant chat (streamed). Uses Google Gemini directly via GEMINI_API_KEY,
 // so it works on any host (Vercel, etc.) with no Lovable dependency.
-const MODEL = "gemini-2.5-flash";
+const MODEL = "gemini-3.8-flash";
 
 async function verifyUser(request: Request) {
   const auth = request.headers.get("authorization") ?? "";
